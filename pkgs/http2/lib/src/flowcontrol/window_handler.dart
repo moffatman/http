@@ -101,6 +101,9 @@ class IncomingWindowHandler {
   /// The stream id this window handler is for (is `0` for connection level).
   final int _streamId;
 
+  /// Number of freed bytes that we haven't sent an update for yet
+  int _windowUpdateCache = 0;
+
   IncomingWindowHandler.stream(
       this._frameWriter, this._localWindow, this._streamId);
 
@@ -153,10 +156,11 @@ class IncomingWindowHandler {
   //  - or decreasing the window size
   void dataProcessed(int numberOfBytes) {
     _localWindow.modify(numberOfBytes);
+    _windowUpdateCache += numberOfBytes;
 
-    // TODO: This can be optimized by delaying the window update to
-    // send one update with a bigger difference than multiple small update
-    // frames.
-    _frameWriter.writeWindowUpdate(numberOfBytes, streamId: _streamId);
+    if ((_windowUpdateCache > (_localWindow.initialSize / 2)) || (numberOfBytes > (_localWindow.initialSize / 3))) {
+      _frameWriter.writeWindowUpdate(_windowUpdateCache, streamId: _streamId);
+      _windowUpdateCache = 0;
+    }
   }
 }
