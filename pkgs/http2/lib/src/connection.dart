@@ -115,7 +115,7 @@ abstract class Connection {
   final Window _peerWindow = Window();
 
   /// The flow window for this connection of this end.
-  final Window _localWindow = Window();
+  late final Window _localWindow;
 
   /// Used for defragmenting PushPromise/Header frames.
   final FrameDefragmenter _defragmenter = FrameDefragmenter();
@@ -185,6 +185,14 @@ abstract class Connection {
         acknowledgedSettings, peerSettings);
     _pingHandler = PingHandler(_frameWriter, _pingReceived);
 
+    if (settingsObject.streamWindowSize != null) {
+      _localWindow = Window(initialSize: settingsObject.streamWindowSize!);
+      _frameWriter.writeWindowUpdate(settingsObject.streamWindowSize!);
+    }
+    else {
+      _localWindow = Window();
+    }
+
     var settings = _decodeSettings(settingsObject);
 
     // Do the initial settings handshake (possibly with pushes disabled).
@@ -196,9 +204,16 @@ abstract class Connection {
           message: 'Failed to set initial settings (error: $error).');
     });
 
-    _settingsHandler.onInitialWindowSizeChange.listen((int difference) {
+    _settingsHandler.onPeerInitialWindowSizeChange.listen((int difference) {
       _catchProtocolErrors(() {
-        _streams.processInitialWindowSizeSettingChange(difference);
+        _streams.processPeerInitialWindowSizeSettingChange(difference);
+      });
+    });
+
+    // Other side ACKed our bigger window
+    _settingsHandler.onLocalInitialWindowSizeChange.listen((int difference) {
+      _catchProtocolErrors(() {
+        _streams.processLocalInitialWindowSizeSettingChange(difference);
       });
     });
 

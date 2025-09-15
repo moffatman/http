@@ -163,4 +163,20 @@ class IncomingWindowHandler {
       _windowUpdateCache = 0;
     }
   }
+
+  /// Update the local window by adding [difference] to it.
+  ///
+  ///
+  /// We have received ACK for a new [SettingsFrame] which updated the default
+  /// stream level [Setting.SETTINGS_INITIAL_WINDOW_SIZE]. This causes all
+  /// existing streams to update the flow stream-level flow control window.
+  void processInitialWindowSizeSettingChange(int difference) {
+    if ((_localWindow.size + difference) > Window.MAX_WINDOW_SIZE) {
+      throw FlowControlException(
+          'Our window update ACKed from remote peer would make flow control '
+          'window too large.');
+    } else {
+      _localWindow.modify(difference);
+    }
+  }
 }

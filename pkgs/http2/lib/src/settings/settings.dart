@@ -104,13 +104,21 @@ class SettingsHandler extends Object with TerminatableMixin {
   /// The peer settings, which we ACKed and are obeying.
   final ActiveSettings _peerSettings;
 
-  final _onInitialWindowSizeChangeController =
+  final _onPeerInitialWindowSizeChangeController =
+      StreamController<int>.broadcast(sync: true);
+
+  final _onLocalInitialWindowSizeChangeController =
       StreamController<int>.broadcast(sync: true);
 
   /// Events are fired when a SettingsFrame changes the initial size
   /// of stream windows.
-  Stream<int> get onInitialWindowSizeChange =>
-      _onInitialWindowSizeChangeController.stream;
+  Stream<int> get onPeerInitialWindowSizeChange =>
+      _onPeerInitialWindowSizeChangeController.stream;
+
+  /// Events are fired when a SettingsFrame changes the initial size
+  /// of stream windows.
+  Stream<int> get onLocalInitialWindowSizeChange =>
+      _onLocalInitialWindowSizeChangeController.stream;
 
   SettingsHandler(this._hpackEncoder, this._frameWriter,
       this._acknowledgedSettings, this._peerSettings);
@@ -209,7 +217,12 @@ class SettingsHandler extends Object with TerminatableMixin {
         case Setting.SETTINGS_INITIAL_WINDOW_SIZE:
           if (setting.value < (1 << 31)) {
             var difference = setting.value - base.initialWindowSize;
-            _onInitialWindowSizeChangeController.add(difference);
+            if (peerSettings) {
+              _onPeerInitialWindowSizeChangeController.add(difference);
+            }
+            else {
+              _onLocalInitialWindowSizeChangeController.add(difference);
+            }
             base.initialWindowSize = setting.value;
           } else {
             throw FlowControlException('Invalid initial window size.');

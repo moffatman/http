@@ -209,11 +209,19 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
 
   List<TransportStream> get openStreams => _openStreams.values.toList();
 
-  void processInitialWindowSizeSettingChange(int difference) {
+  void processPeerInitialWindowSizeSettingChange(int difference) {
     // If the initialFlowWindow size was changed via a SettingsFrame, all
     // existing streams must be updated to reflect this change.
     for (var stream in _openStreams.values) {
       stream.windowHandler.processInitialWindowSizeSettingChange(difference);
+    }
+  }
+
+  void processLocalInitialWindowSizeSettingChange(int difference) {
+    // If the initialFlowWindow size was changed via a SettingsFrame, all
+    // existing streams must be updated to reflect this change.
+    for (var stream in _openStreams.values) {
+      stream.incomingQueue.windowHandler.processInitialWindowSizeSettingChange(difference);
     }
   }
 
