@@ -12,7 +12,7 @@ class FrameReader {
   /// complying with.
   final ActiveSettings _localSettings;
 
-  final _framesController = StreamController<Frame>();
+  final _framesController = StreamController<Frame>(sync: true);
 
   FrameReader(this._inputStream, this._localSettings);
 

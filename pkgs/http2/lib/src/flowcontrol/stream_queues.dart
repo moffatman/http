@@ -166,7 +166,7 @@ class StreamMessageQueueIn extends Object
   final Queue<Message> _pendingMessages = Queue<Message>();
 
   /// The [StreamController] used for producing the [messages] stream.
-  final _incomingMessagesC = StreamController<StreamMessage>();
+  final _incomingMessagesC = StreamController<StreamMessage>(sync: true);
 
   /// The [StreamController] used for producing the [serverPushes] stream.
   final _serverPushStreamsC = StreamController<TransportStreamPush>();

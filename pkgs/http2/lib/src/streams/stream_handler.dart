@@ -319,7 +319,7 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
 
     incomingQueue.insertNewStreamMessageQueue(streamId, streamQueueIn);
 
-    var outgoingC = StreamController<StreamMessage>();
+    var outgoingC = StreamController<StreamMessage>(sync: true);
     var stream = Http2StreamImpl(streamQueueIn, streamQueueOut, outgoingC,
         streamId, windowOutHandler, _canPush, _push, _terminateStream);
     final wasIdle = _openStreams.isEmpty;
