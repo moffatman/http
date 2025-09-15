@@ -56,6 +56,9 @@ class Frame {
   Frame(this.header);
 
   Map toJson() => {'header': header.toJson()};
+
+  @override
+  String toString() => '$runtimeType(${toJson()})';
 }
 
 class DataFrame extends Frame {
@@ -197,6 +200,9 @@ class Setting {
   Setting(this.identifier, this.value);
 
   Map toJson() => {'identifier': identifier, 'value': value};
+
+  @override
+  String toString() => 'Setting(${toJson()})';
 }
 
 class SettingsFrame extends Frame {
