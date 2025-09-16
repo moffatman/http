@@ -187,7 +187,6 @@ abstract class Connection {
 
     if (settingsObject.streamWindowSize != null) {
       _localWindow = Window(initialSize: settingsObject.streamWindowSize!);
-      _frameWriter.writeWindowUpdate(settingsObject.streamWindowSize!);
     }
     else {
       _localWindow = Window();
@@ -216,6 +215,10 @@ abstract class Connection {
         _streams.processLocalInitialWindowSizeSettingChange(difference);
       });
     });
+
+    if (settingsObject.streamWindowSize != null) {
+      _frameWriter.writeWindowUpdate(_localWindow.size);
+    }
 
     // Setup the connection window handler, which keeps track of the
     // size of the outgoing connection window.
