@@ -139,6 +139,7 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
 
   final ActiveSettings _peerSettings;
   final ActiveSettings _localSettings;
+  final StreamPriority? _initialStreamPriority;
 
   final Map<int, Http2StreamImpl> _openStreams = {};
   int nextStreamId;
@@ -166,6 +167,7 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
       this.outgoingQueue,
       this._peerSettings,
       this._localSettings,
+      this._initialStreamPriority,
       this._onActiveStateChanged,
       this.nextStreamId,
       this.lastRemoteStreamId);
@@ -176,9 +178,10 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
       ConnectionMessageQueueOut outgoingQueue,
       ActiveSettings peerSettings,
       ActiveSettings localSettings,
+      StreamPriority? initialStreamPriority,
       ActiveStateHandler onActiveStateChanged) {
     return StreamHandler._(writer, incomingQueue, outgoingQueue, peerSettings,
-        localSettings, onActiveStateChanged, 1, 0);
+        localSettings, initialStreamPriority, onActiveStateChanged, 1, 0);
   }
 
   factory StreamHandler.server(
@@ -189,7 +192,7 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
       ActiveSettings localSettings,
       ActiveStateHandler onActiveStateChanged) {
     return StreamHandler._(writer, incomingQueue, outgoingQueue, peerSettings,
-        localSettings, onActiveStateChanged, 2, -1);
+        localSettings, null, onActiveStateChanged, 2, -1);
   }
 
   @override
@@ -723,8 +726,12 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
       throw StateError('Idle state expected.');
     }
 
+    var priority = stream.state == StreamState.Idle &&
+            !_peerSettings.noRfc7540Priorities
+        ? _initialStreamPriority
+        : null;
     stream.outgoingQueue
-        .enqueueMessage(HeadersMessage(stream.id, headers, endStream));
+        .enqueueMessage(HeadersMessage(stream.id, headers, endStream, priority: priority));
 
     if (stream.state == StreamState.Idle) {
       _changeState(stream, StreamState.Open);

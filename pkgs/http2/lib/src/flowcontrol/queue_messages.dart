@@ -18,8 +18,9 @@ abstract class Message {
 
 class HeadersMessage extends Message {
   final List<Header> headers;
+  final StreamPriority? priority;
 
-  HeadersMessage(int streamId, this.headers, bool endStream)
+  HeadersMessage(int streamId, this.headers, bool endStream, {this.priority})
       : super(streamId, endStream);
 
   @override

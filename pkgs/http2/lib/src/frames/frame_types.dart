@@ -193,6 +193,7 @@ class Setting {
   static const int SETTINGS_INITIAL_WINDOW_SIZE = 4;
   static const int SETTINGS_MAX_FRAME_SIZE = 5;
   static const int SETTINGS_MAX_HEADER_LIST_SIZE = 6;
+  static const int SETTINGS_NO_RFC7540_PRIORITIES = 9;
 
   final int identifier;
   final int value;

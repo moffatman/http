@@ -19,6 +19,142 @@ import 'src/hpack/hpack_test.dart' show isHeader;
 void main() {
   group('client-tests', () {
     group('normal', () {
+      clientTest(
+        'advertises-independent-stream-and-connection-windows',
+        (
+          ClientTransportConnection client,
+          FrameWriter serverWriter,
+          StreamIterator<Frame> serverReader,
+          Future<Frame> Function() nextFrame,
+        ) async {
+          const streamWindowSize = 2 * 1024 * 1024;
+          const connectionWindowSize = 10 * 1024 * 1024;
+          const defaultWindowSize = 65535;
+          final settingsDone = Completer<void>();
+
+          Future<void> serverFun() async {
+            final settings = await nextFrame() as SettingsFrame;
+            expect(
+              settings.settings,
+              contains(
+                isA<Setting>()
+                    .having(
+                      (setting) => setting.identifier,
+                      'identifier',
+                      Setting.SETTINGS_INITIAL_WINDOW_SIZE,
+                    )
+                    .having(
+                      (setting) => setting.value,
+                      'value',
+                      streamWindowSize,
+                    ),
+              ),
+            );
+            expect(
+              await nextFrame(),
+              isA<WindowUpdateFrame>()
+                  .having(
+                    (frame) => frame.header.streamId,
+                    'streamId',
+                    0,
+                  )
+                  .having(
+                    (frame) => frame.windowSizeIncrement,
+                    'windowSizeIncrement',
+                    connectionWindowSize - defaultWindowSize,
+                  ),
+            );
+
+            serverWriter.writeSettingsFrame([]);
+            expect(await nextFrame(), isA<SettingsFrame>());
+            serverWriter.writeSettingsAckFrame();
+            settingsDone.complete();
+
+            expect(await nextFrame(), isA<GoawayFrame>());
+            expect(await serverReader.moveNext(), false);
+            await serverWriter.close();
+          }
+
+          Future<void> clientFun() async {
+            await settingsDone.future;
+            await client.finish();
+          }
+
+          await Future.wait([serverFun(), clientFun()]);
+        },
+        clientSettings: const ClientSettings(
+          streamWindowSize: 2 * 1024 * 1024,
+          connectionWindowSize: 10 * 1024 * 1024,
+        ),
+      );
+
+      clientTest(
+        'advertises-android-profile-and-prioritizes-initial-headers',
+        (
+          ClientTransportConnection client,
+          FrameWriter serverWriter,
+          StreamIterator<Frame> serverReader,
+          Future<Frame> Function() nextFrame,
+        ) async {
+          final requestDone = Completer<void>();
+
+          Future<void> serverFun() async {
+            final settings = await nextFrame() as SettingsFrame;
+            expect(
+              settings.settings
+                  .map((setting) => [setting.identifier, setting.value]),
+              [
+                [Setting.SETTINGS_HEADER_TABLE_SIZE, 64 * 1024],
+                [Setting.SETTINGS_ENABLE_PUSH, 0],
+                [Setting.SETTINGS_INITIAL_WINDOW_SIZE, 6 * 1024 * 1024],
+                [Setting.SETTINGS_MAX_HEADER_LIST_SIZE, 256 * 1024],
+              ],
+            );
+
+            final windowUpdate = await nextFrame() as WindowUpdateFrame;
+            expect(windowUpdate.header.streamId, 0);
+            expect(windowUpdate.windowSizeIncrement,
+                15 * 1024 * 1024 - 65535);
+
+            final headers = await nextFrame() as HeadersFrame;
+            expect(headers.hasPriorityFlag, isTrue);
+            expect(headers.exclusiveDependency, isTrue);
+            expect(headers.streamDependency, 0);
+            expect(headers.weight, 255);
+
+            serverWriter.writeSettingsFrame([]);
+            expect(await nextFrame(), isA<SettingsFrame>());
+            serverWriter.writeSettingsAckFrame();
+            requestDone.complete();
+
+            expect(await nextFrame(), isA<GoawayFrame>());
+            expect(await serverReader.moveNext(), false);
+            await serverWriter.close();
+          }
+
+          Future<void> clientFun() async {
+            client.makeRequest([Header.ascii(':method', 'GET')],
+                endStream: true);
+            await requestDone.future;
+            await client.terminate();
+          }
+
+          await Future.wait([serverFun(), clientFun()]);
+        },
+        clientSettings: const ClientSettings(
+          headerTableSize: 64 * 1024,
+          streamWindowSize: 6 * 1024 * 1024,
+          connectionWindowSize: 15 * 1024 * 1024,
+          maxHeaderListSize: 256 * 1024,
+          noRfc7540Priorities: null,
+          initialStreamPriority: StreamPriority(
+            streamDependency: 0,
+            weight: 255,
+            exclusive: true,
+          ),
+        ),
+      );
+
       clientTest('gracefull-shutdown-for-unused-connection',
           (ClientTransportConnection client,
               FrameWriter serverWriter,
@@ -837,13 +973,16 @@ void main() {
 }
 
 void clientTest(
-  String name,
-  Future Function(ClientTransportConnection, FrameWriter,
-          StreamIterator<Frame> frameReader, Future<Frame> Function() readNext)
-      func,
-) {
+    String name,
+    Future Function(
+            ClientTransportConnection,
+            FrameWriter,
+            StreamIterator<Frame> frameReader,
+            Future<Frame> Function() readNext)
+        func,
+    {ClientSettings? clientSettings}) {
   return test(name, () {
-    var streams = ClientStreams();
+    var streams = ClientStreams(clientSettings);
     var serverReader = streams.serverConnectionFrameReader;
 
     Future<Frame> readNext() async {
@@ -857,6 +996,10 @@ void clientTest(
 }
 
 class ClientStreams {
+  final ClientSettings? clientSettings;
+
+  ClientStreams([this.clientSettings]);
+
   final StreamController<List<int>> writeA = StreamController();
   final StreamController<List<int>> writeB = StreamController();
   Stream<List<int>> get readA => writeA.stream;
@@ -877,5 +1020,9 @@ class ClientStreams {
   }
 
   ClientTransportConnection get clientConnection =>
-      ClientTransportConnection.viaStreams(readB, writeA);
+      ClientTransportConnection.viaStreams(
+        readB,
+        writeA,
+        settings: clientSettings,
+      );
 }

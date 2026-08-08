@@ -7,14 +7,20 @@ import 'dart:io';
 
 import 'src/connection.dart';
 import 'src/hpack/hpack.dart' show Header;
+import 'src/priority.dart';
 
 export 'src/frames/frames.dart' show ErrorCode;
 export 'src/hpack/hpack.dart' show Header;
+export 'src/priority.dart' show StreamPriority;
 
 typedef ActiveStateHandler = void Function(bool isActive);
 
 /// Settings for a [TransportConnection].
 abstract class Settings {
+  /// The maximum HPACK dynamic table size this endpoint permits the peer to
+  /// use when encoding headers.
+  final int? headerTableSize;
+
   /// The maximum number of concurrent streams the remote end can open
   /// (defaults to being unlimited).
   final int? concurrentStreamLimit;
@@ -23,12 +29,49 @@ abstract class Settings {
   /// streams (defaults to 65535 bytes).
   final int? streamWindowSize;
 
-  const Settings({this.concurrentStreamLimit, this.streamWindowSize});
+  /// The connection-level receive window advertised to the remote peer
+  /// (defaults to 65535 bytes).
+  ///
+  /// HTTP/2 has no setting for this value. Values above 65535 are advertised
+  /// with an initial connection-level WINDOW_UPDATE frame.
+  final int? connectionWindowSize;
+
+  /// The maximum uncompressed header list size this endpoint is prepared to
+  /// accept.
+  final int? maxHeaderListSize;
+
+  /// Whether RFC 7540 priority signals should be disabled.
+  ///
+  /// A null value omits SETTINGS_NO_RFC7540_PRIORITIES from the initial
+  /// SETTINGS frame.
+  final bool? noRfc7540Priorities;
+
+  const Settings({
+    this.headerTableSize,
+    this.concurrentStreamLimit,
+    this.streamWindowSize,
+    this.connectionWindowSize,
+    this.maxHeaderListSize,
+    this.noRfc7540Priorities = true,
+  })  : assert(headerTableSize == null || headerTableSize >= 0),
+        assert(maxHeaderListSize == null || maxHeaderListSize >= 0),
+        assert(
+          connectionWindowSize == null ||
+              (connectionWindowSize >= 65535 &&
+                  connectionWindowSize <= 0x7fffffff),
+        );
 }
 
 /// Settings for a [TransportConnection] a server can make.
 class ServerSettings extends Settings {
-  const ServerSettings({super.concurrentStreamLimit, super.streamWindowSize});
+  const ServerSettings({
+    super.headerTableSize,
+    super.concurrentStreamLimit,
+    super.streamWindowSize,
+    super.connectionWindowSize,
+    super.maxHeaderListSize,
+    super.noRfc7540Priorities,
+  });
 }
 
 /// Settings for a [TransportConnection] a client can make.
@@ -36,10 +79,19 @@ class ClientSettings extends Settings {
   /// Whether the client allows pushes from the server (defaults to false).
   final bool allowServerPushes;
 
+  /// Priority information included with the first HEADERS frame of each
+  /// locally-created stream, unless the peer disables RFC 7540 priorities.
+  final StreamPriority? initialStreamPriority;
+
   const ClientSettings(
-      {super.concurrentStreamLimit,
+      {super.headerTableSize,
+      super.concurrentStreamLimit,
       super.streamWindowSize,
-      this.allowServerPushes = false});
+      super.connectionWindowSize,
+      super.maxHeaderListSize,
+      super.noRfc7540Priorities,
+      this.allowServerPushes = false,
+      this.initialStreamPriority});
 }
 
 /// Represents a HTTP/2 connection.

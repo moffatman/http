@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:http2/src/frames/frames.dart';
 import 'package:http2/src/hpack/hpack.dart';
 import 'package:http2/src/settings/settings.dart';
+import 'package:http2/transport.dart' show StreamPriority;
 import 'package:test/test.dart';
 
 import '../hpack/hpack_test.dart' show isHeader;
@@ -48,6 +49,36 @@ void main() {
         expect(headersFrame.hasPriorityFlag, false);
         expect(headersFrame.streamDependency, isNull);
         expect(headersFrame.weight, isNull);
+
+        var headers = decoder.decode(headersFrame.headerBlockFragment);
+        expect(headers, hasLength(1));
+        expect(headers[0], isHeader('a', 'b'));
+      });
+
+      writerReaderTest('headers-frame-with-priority',
+          (FrameWriter writer, FrameReader reader, HPackDecoder decoder) async {
+        writer.writeHeadersFrame(
+          99,
+          [Header.ascii('a', 'b')],
+          endStream: true,
+          priority: const StreamPriority(
+            streamDependency: 0,
+            weight: 255,
+            exclusive: true,
+          ),
+        );
+
+        var frames = await finishWriting(writer, reader);
+        expect(frames, hasLength(1));
+
+        var headersFrame = frames.single as HeadersFrame;
+        expect(headersFrame.header.streamId, 99);
+        expect(headersFrame.hasEndStreamFlag, isTrue);
+        expect(headersFrame.hasEndHeadersFlag, isTrue);
+        expect(headersFrame.hasPriorityFlag, isTrue);
+        expect(headersFrame.exclusiveDependency, isTrue);
+        expect(headersFrame.streamDependency, 0);
+        expect(headersFrame.weight, 255);
 
         var headers = decoder.decode(headersFrame.headerBlockFragment);
         expect(headers, hasLength(1));
@@ -178,7 +209,9 @@ void main() {
       writerReaderTest('frag-headers-frame',
           (FrameWriter writer, FrameReader reader, HPackDecoder decoder) async {
         var headerName = [1];
-        var headerValue = List.filled(1 << 14, 0x42);
+        // Keep the HPACK block larger than the default 16 KiB frame size even
+        // after Huffman encoding.
+        var headerValue = List.filled(1 << 15, 0x42);
         var header = Header(headerName, headerValue);
 
         writer.writeHeadersFrame(99, [header], endStream: true);

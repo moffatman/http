@@ -113,7 +113,7 @@ class ConnectionMessageQueueOut extends Object
     if (message is HeadersMessage) {
       _messages.removeFirst();
       _frameWriter.writeHeadersFrame(message.streamId, message.headers,
-          endStream: message.endStream);
+          endStream: message.endStream, priority: message.priority);
     } else if (message is PushPromiseMessage) {
       _messages.removeFirst();
       _frameWriter.writePushPromiseFrame(

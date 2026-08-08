@@ -100,6 +100,7 @@ class MockFrameWriter extends _i1.Mock implements _i4.FrameWriter {
     int? streamId,
     List<_i6.Header>? headers, {
     bool? endStream = true,
+    _i11.StreamPriority? priority,
   }) =>
       super.noSuchMethod(
         Invocation.method(
@@ -108,7 +109,7 @@ class MockFrameWriter extends _i1.Mock implements _i4.FrameWriter {
             streamId,
             headers,
           ],
-          {#endStream: endStream},
+          {#endStream: endStream, #priority: priority},
         ),
         returnValueForMissingStub: null,
       );

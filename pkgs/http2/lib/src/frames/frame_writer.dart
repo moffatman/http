@@ -5,7 +5,6 @@
 part of 'frames.dart';
 
 // TODO: No support for writing padded information.
-// TODO: No support for stream priorities.
 class FrameWriter {
   /// The HPack compression context.
   final HPackEncoder _hpackEncoder;
@@ -57,17 +56,22 @@ class FrameWriter {
   }
 
   void writeHeadersFrame(int streamId, List<Header> headers,
-      {bool endStream = true}) {
+      {bool endStream = true, StreamPriority? priority}) {
+    if (priority?.streamDependency == streamId) {
+      throw ArgumentError.value(priority!.streamDependency,
+          'priority.streamDependency', 'A stream cannot depend on itself.');
+    }
+
     var fragment = _hpackEncoder.encode(headers);
     var maxSize =
-        _peerSettings.maxFrameSize - HeadersFrame.MAX_CONSTANT_PAYLOAD;
+        _peerSettings.maxFrameSize - (priority == null ? 0 : 5);
 
-    if (fragment.length < maxSize) {
-      _writeHeadersFrameNoFragment(streamId, fragment, true, endStream);
+    if (fragment.length <= maxSize) {
+      _writeHeadersFrameNoFragment(streamId, fragment, true, endStream, priority);
     } else {
       var chunk = fragment.sublist(0, maxSize);
       fragment = fragment.sublist(maxSize);
-      _writeHeadersFrameNoFragment(streamId, chunk, false, endStream);
+      _writeHeadersFrameNoFragment(streamId, chunk, false, endStream, priority);
       while (fragment.length > _peerSettings.maxFrameSize) {
         var chunk = fragment.sublist(0, _peerSettings.maxFrameSize);
         fragment = fragment.sublist(_peerSettings.maxFrameSize);
@@ -78,19 +82,31 @@ class FrameWriter {
   }
 
   void _writeHeadersFrameNoFragment(
-      int streamId, List<int> fragment, bool endHeaders, bool endStream) {
+      int streamId, List<int> fragment, bool endHeaders, bool endStream,
+      StreamPriority? priority) {
     var type = FrameType.HEADERS;
     var flags = 0;
     if (endHeaders) flags |= HeadersFrame.FLAG_END_HEADERS;
     if (endStream) flags |= HeadersFrame.FLAG_END_STREAM;
+    if (priority != null) flags |= HeadersFrame.FLAG_PRIORITY;
 
-    var buffer = Uint8List(FRAME_HEADER_SIZE + fragment.length);
+    var priorityLength = priority == null ? 0 : 5;
+    var payloadLength = priorityLength + fragment.length;
+    var buffer = Uint8List(FRAME_HEADER_SIZE + payloadLength);
     var offset = 0;
 
-    _setFrameHeader(buffer, offset, type, flags, streamId, fragment.length);
+    _setFrameHeader(buffer, offset, type, flags, streamId, payloadLength);
     offset += FRAME_HEADER_SIZE;
 
-    buffer.setRange(offset, buffer.length, fragment);
+    if (priority != null) {
+      var dependency = priority.streamDependency;
+      if (priority.exclusive) dependency |= 1 << 31;
+      setInt32(buffer, offset, dependency);
+      buffer[offset + 4] = priority.weight;
+      offset += 5;
+    }
+
+    buffer.setRange(offset, offset + fragment.length, fragment);
 
     _writeData(buffer);
   }

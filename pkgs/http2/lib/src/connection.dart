@@ -109,7 +109,7 @@ abstract class Connection {
       _onInitialPeerSettingsReceived.future;
 
   /// The HPack context for this connection.
-  final HPackContext _hpackContext = HPackContext();
+  late final HPackContext _hpackContext;
 
   /// The flow window for this connection of the peer.
   final Window _peerWindow = Window();
@@ -151,6 +151,8 @@ abstract class Connection {
   Connection(Stream<List<int>> incoming, StreamSink<List<int>> outgoing,
       Settings settings,
       {this.isClientConnection = true}) {
+    _hpackContext = HPackContext(
+        maxReceivingHeaderTableSize: settings.headerTableSize ?? 4096);
     _setupConnection(incoming, outgoing, settings);
   }
 
@@ -185,12 +187,9 @@ abstract class Connection {
         acknowledgedSettings, peerSettings);
     _pingHandler = PingHandler(_frameWriter, _pingReceived);
 
-    if (settingsObject.streamWindowSize != null) {
-      _localWindow = Window(initialSize: settingsObject.streamWindowSize!);
-    }
-    else {
-      _localWindow = Window();
-    }
+    _localWindow = Window(
+      initialSize: settingsObject.connectionWindowSize ?? 65535,
+    );
 
     var settings = _decodeSettings(settingsObject);
 
@@ -216,8 +215,11 @@ abstract class Connection {
       });
     });
 
-    if (settingsObject.streamWindowSize != null) {
-      _frameWriter.writeWindowUpdate(_localWindow.size);
+    if (settingsObject.connectionWindowSize != null &&
+        settingsObject.connectionWindowSize! > 65535) {
+      _frameWriter.writeWindowUpdate(
+        settingsObject.connectionWindowSize! - 65535,
+      );
     }
 
     // Setup the connection window handler, which keeps track of the
@@ -240,6 +242,7 @@ abstract class Connection {
           _outgoingQueue,
           _settingsHandler.peerSettings,
           _settingsHandler.acknowledgedSettings,
+          (settingsObject as ClientSettings).initialStreamPriority,
           _activeStateHandler);
     } else {
       _streams = StreamHandler.server(
@@ -260,6 +263,23 @@ abstract class Connection {
   List<Setting> _decodeSettings(Settings settings) {
     var settingsList = <Setting>[];
 
+    if (settings is ClientSettings) {
+      var headerTableSize = settings.headerTableSize;
+      if (headerTableSize != null) {
+        settingsList.add(
+            Setting(Setting.SETTINGS_HEADER_TABLE_SIZE, headerTableSize));
+      }
+
+      // By default the server is allowed to do server pushes.
+      if (!settings.allowServerPushes) {
+        settingsList.add(Setting(Setting.SETTINGS_ENABLE_PUSH, 0));
+      }
+    } else if (settings is ServerSettings) {
+      // No special server settings at the moment.
+    } else {
+      assert(false);
+    }
+
     // By default a endpoint can make an unlimited number of concurrent streams.
     var concurrentStreamLimit = settings.concurrentStreamLimit;
     if (concurrentStreamLimit != null) {
@@ -274,15 +294,16 @@ abstract class Connection {
           .add(Setting(Setting.SETTINGS_INITIAL_WINDOW_SIZE, streamWindowSize));
     }
 
-    if (settings is ClientSettings) {
-      // By default the server is allowed to do server pushes.
-      if (!settings.allowServerPushes) {
-        settingsList.add(Setting(Setting.SETTINGS_ENABLE_PUSH, 0));
-      }
-    } else if (settings is ServerSettings) {
-      // No special server settings at the moment.
-    } else {
-      assert(false);
+    var maxHeaderListSize = settings.maxHeaderListSize;
+    if (maxHeaderListSize != null) {
+      settingsList.add(Setting(
+          Setting.SETTINGS_MAX_HEADER_LIST_SIZE, maxHeaderListSize));
+    }
+
+    var noRfc7540Priorities = settings.noRfc7540Priorities;
+    if (noRfc7540Priorities != null) {
+      settingsList.add(Setting(Setting.SETTINGS_NO_RFC7540_PRIORITIES,
+          noRfc7540Priorities ? 1 : 0));
     }
 
     return settingsList;

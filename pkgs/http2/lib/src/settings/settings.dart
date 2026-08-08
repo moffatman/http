@@ -71,13 +71,17 @@ class ActiveSettings {
   /// enforced. The initial value of this setting is unlimited.
   int? maxHeaderListSize;
 
+  /// Whether the endpoint asks its peer not to send RFC 7540 priority signals.
+  bool noRfc7540Priorities;
+
   ActiveSettings(
       {this.headerTableSize = 4096,
       this.enablePush = true,
       this.maxConcurrentStreams,
       this.initialWindowSize = (1 << 16) - 1,
       this.maxFrameSize = 1 << 14,
-      this.maxHeaderListSize});
+      this.maxHeaderListSize,
+      this.noRfc7540Priorities = false});
 }
 
 /// Handles remote and local connection [Setting]s.
@@ -226,6 +230,17 @@ class SettingsHandler extends Object with TerminatableMixin {
             base.initialWindowSize = setting.value;
           } else {
             throw FlowControlException('Invalid initial window size.');
+          }
+          break;
+
+        case Setting.SETTINGS_NO_RFC7540_PRIORITIES:
+          if (setting.value == 0) {
+            base.noRfc7540Priorities = false;
+          } else if (setting.value == 1) {
+            base.noRfc7540Priorities = true;
+          } else {
+            throw ProtocolException(
+                'The no-RFC7540-priorities setting can be only set to 0 or 1.');
           }
           break;
 

@@ -19,7 +19,9 @@ void main() {
     test('connection-message-queue-out', () {
       var fw = MockFrameWriter();
       when(fw.bufferIndicator).thenReturn(BufferIndicator());
-      when(fw.writeHeadersFrame(any, any, endStream: anyNamed('endStream')))
+      when(fw.writeHeadersFrame(any, any,
+              endStream: anyNamed('endStream'),
+              priority: anyNamed('priority')))
           .thenReturn(null);
       when(fw.writeDataFrame(any, any, endStream: anyNamed('endStream')))
           .thenReturn(null);
@@ -36,7 +38,9 @@ void main() {
       // Send [HeadersMessage].
       queue.enqueueMessage(HeadersMessage(99, headers, false));
       expect(queue.pendingMessages, 0);
-      verify(fw.writeHeadersFrame(99, headers, endStream: false)).called(1);
+      verify(fw.writeHeadersFrame(99, headers,
+              endStream: false, priority: null))
+          .called(1);
       verify(fw.bufferIndicator).called(greaterThan(0));
       verifyNoMoreInteractions(fw);
       verifyZeroInteractions(windowMock);

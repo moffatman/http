@@ -47,11 +47,11 @@ class Header {
 
   Header(this.name, this.value, {this.neverIndexed = false});
 
-  factory Header.ascii(String name, String value) {
+  factory Header.ascii(String name, String value, {bool neverIndexed = false}) {
     // Specs: `However, header field names MUST be converted to lowercase prior
     // to their encoding in HTTP/2. A request or response containing uppercase
     // header field names MUST be treated as malformed (Section 8.1.2.6).`
-    return Header(ascii.encode(name.toLowerCase()), ascii.encode(value));
+    return Header(ascii.encode(name.toLowerCase()), ascii.encode(value), neverIndexed: neverIndexed);
   }
 }
 
@@ -166,21 +166,40 @@ class HPackDecoder {
 }
 
 /// A stateful HPACK encoder.
-// TODO: Currently we encode all headers:
-//    - without huffman encoding
-//    - without using the dynamic table
 class HPackEncoder {
+  final IndexTable _table = IndexTable();
+
+  int _advertisedMaximumTableSize = 4096;
+  int _maximumTableSize = 4096;
+  int? _smallestPendingMaximumTableSize;
+  bool _tableSizeUpdatePending = false;
+
   void updateMaxSendingHeaderTableSize(int newMaximumSize) {
-    // TODO: Once we start encoding via dynamic table we need to let the other
-    // side know the maximum table size we're using.
+    if (newMaximumSize < 0) {
+      throw ArgumentError.value(
+          newMaximumSize, 'newMaximumSize', 'must not be negative');
+    }
+    if (newMaximumSize == _maximumTableSize) return;
+
+    if (newMaximumSize < _advertisedMaximumTableSize) {
+      final pendingMinimum = _smallestPendingMaximumTableSize;
+      if (pendingMinimum == null || newMaximumSize < pendingMinimum) {
+        _smallestPendingMaximumTableSize = newMaximumSize;
+      }
+    }
+    _maximumTableSize = newMaximumSize;
+    _table.updateMaxSize(newMaximumSize);
+    _tableSizeUpdatePending = _smallestPendingMaximumTableSize != null ||
+        newMaximumSize != _advertisedMaximumTableSize;
   }
 
   List<int> encode(List<Header> headers) {
     var bytesBuilder = BytesBuilder();
-    var currentByte = 0;
 
-    void writeInteger(int prefixBits, int value) {
+    void writeInteger(int prefixBits, int prefix, int value) {
       assert(prefixBits <= 8);
+      assert(prefix & ((1 << prefixBits) - 1) == 0);
+      var currentByte = prefix;
 
       if (value < (1 << prefixBits) - 1) {
         currentByte |= value;
@@ -199,24 +218,53 @@ class HPackEncoder {
           bytesBuilder.addByte(currentByte);
         }
       }
-      currentByte = 0;
     }
 
     void writeStringLiteral(List<int> bytes) {
-      // TODO: Support huffman encoding.
-      currentByte = 0; // 1 would be huffman encoding
-      writeInteger(7, bytes.length);
-      bytesBuilder.add(bytes);
+      final huffmanBytes = http2HuffmanCodec.encode(bytes);
+      if (huffmanBytes.length < bytes.length) {
+        writeInteger(7, 0x80, huffmanBytes.length);
+        bytesBuilder.add(huffmanBytes);
+      } else {
+        writeInteger(7, 0, bytes.length);
+        bytesBuilder.add(bytes);
+      }
     }
 
-    void writeLiteralHeaderWithoutIndexing(Header header) {
-      bytesBuilder.addByte(0);
-      writeStringLiteral(header.name);
+    void writeLiteralHeader(
+        Header header, int prefixBits, int prefix, bool addToDynamicTable) {
+      final nameIndex = _table.indexOfName(header.name);
+      writeInteger(prefixBits, prefix, nameIndex ?? 0);
+      if (nameIndex == null) writeStringLiteral(header.name);
       writeStringLiteral(header.value);
+      if (addToDynamicTable) _table.addHeaderField(header);
+    }
+
+    if (_tableSizeUpdatePending) {
+      final pendingMinimum = _smallestPendingMaximumTableSize;
+      if (pendingMinimum != null && pendingMinimum != _maximumTableSize) {
+        writeInteger(5, 0x20, pendingMinimum);
+      }
+      writeInteger(5, 0x20, _maximumTableSize);
+      _advertisedMaximumTableSize = _maximumTableSize;
+      _smallestPendingMaximumTableSize = null;
+      _tableSizeUpdatePending = false;
     }
 
     for (var header in headers) {
-      writeLiteralHeaderWithoutIndexing(header);
+      if (header.neverIndexed) {
+        writeLiteralHeader(header, 4, 0x10, false);
+        continue;
+      }
+
+      final exactIndex = _table.indexOf(header);
+      if (exactIndex != null) {
+        writeInteger(7, 0x80, exactIndex);
+      } else if (_table.canAddHeaderField(header)) {
+        writeLiteralHeader(header, 6, 0x40, true);
+      } else {
+        writeLiteralHeader(header, 4, 0, false);
+      }
     }
 
     return bytesBuilder.takeBytes();
@@ -300,6 +348,39 @@ class IndexTable {
 
   IndexTable();
 
+  int? indexOf(Header header) {
+    for (var i = 1; i < _staticTable.length; i++) {
+      final candidate = _staticTable[i]!;
+      if (_bytesEqual(candidate.name, header.name) &&
+          _bytesEqual(candidate.value, header.value)) {
+        return i;
+      }
+    }
+    for (var i = 0; i < _dynamicTable.length; i++) {
+      final candidate = _dynamicTable[i];
+      if (_bytesEqual(candidate.name, header.name) &&
+          _bytesEqual(candidate.value, header.value)) {
+        return _staticTable.length + i;
+      }
+    }
+    return null;
+  }
+
+  int? indexOfName(List<int> name) {
+    for (var i = 1; i < _staticTable.length; i++) {
+      if (_bytesEqual(_staticTable[i]!.name, name)) return i;
+    }
+    for (var i = 0; i < _dynamicTable.length; i++) {
+      if (_bytesEqual(_dynamicTable[i].name, name)) {
+        return _staticTable.length + i;
+      }
+    }
+    return null;
+  }
+
+  bool canAddHeaderField(Header header) =>
+      _maximumSize != 0 && _sizeOf(header) <= _maximumSize;
+
   /// Updates the maximum size which the dynamic table can grow to.
   void updateMaxSize(int newMaxDynTableSize) {
     _maximumSize = newMaxDynTableSize;
@@ -344,4 +425,12 @@ class IndexTable {
   ///
   /// This is specified to be the number of octets of name/value plus 32.
   int _sizeOf(Header header) => header.name.length + header.value.length + 32;
+}
+
+bool _bytesEqual(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) return false;
+  }
+  return true;
 }

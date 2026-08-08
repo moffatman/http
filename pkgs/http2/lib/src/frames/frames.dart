@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import '../async_utils/async_utils.dart';
 import '../byte_utils.dart';
 import '../hpack/hpack.dart';
+import '../priority.dart';
 import '../settings/settings.dart';
 import '../sync_errors.dart';
 
