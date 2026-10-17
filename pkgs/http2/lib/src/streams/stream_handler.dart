@@ -549,6 +549,13 @@ class StreamHandler extends Object with TerminatableMixin, ClosableMixin {
         }
 
         if (frame is HeadersFrame) {
+          if (!frameBelongsToIdleStream()) {
+            // Headers can already be in flight when a stream is reset. The
+            // connection has decoded them to preserve the shared HPACK state;
+            // discard headers for closed streams instead of treating them as
+            // an attempt to open a new stream (RFC 9113, section 5.1).
+            return;
+          }
           if (isServer) {
             var newStream = newRemoteStream(frame.header.streamId);
             _changeState(newStream, StreamState.Open);
